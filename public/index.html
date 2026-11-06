@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>❯ nova v2 · --force ./buildyou</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--bg:#040805;--surface:#0a0f0a;--border:#1c2b1c;--phos:#3DFF73;--dim:#2EA05C;--acid:#b5ff4d;--warn:#ffaa00;--err:#ff4f4f;--text:#e0e0f0;--muted:#5a7a5a;--mono:'JetBrains Mono',monospace}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);height:100vh;overflow:hidden}
+textarea:focus,input:focus{outline:none!important;border-color:var(--dim)!important}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes slideIn{from{transform:translateY(-6px);opacity:0}to{transform:translateY(0);opacity:1}}
+.nb:hover:not(:disabled){filter:brightness(1.12);transform:translateY(-1px)}
+.tabbtn:hover{background:#3DFF7318!important}
+.starter:hover{background:#3DFF7318!important;border-color:#3DFF7355!important}
+.dcard:hover{border-color:#3DFF7355!important}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useRef,useEffect,useCallback}=React;
+
+/* ═══ CONFIG — point at your deployed backend ═══ */
+const WS_URL  = (location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws";
+const API_URL = location.protocol+"//"+location.host;
+const ADMIN_TOK = "";
+const H=(x={})=>({"Content-Type":"application/json",...(ADMIN_TOK?{"x-admin-token":ADMIN_TOK}:{}),...x});
+const api={
+  getSite:()=>fetch(`${API_URL}/api/site`).then(r=>r.json()),
+  patchSite:(b)=>fetch(`${API_URL}/api/site`,{method:"PATCH",headers:H(),body:JSON.stringify(b)}).then(r=>r.json()),
+  resetSite:()=>fetch(`${API_URL}/api/site/reset`,{method:"POST",headers:H()}).then(r=>r.json()),
+  getDocs:()=>fetch(`${API_URL}/api/docs`).then(r=>r.json()),
+  addDoc:(b)=>fetch(`${API_URL}/api/docs`,{method:"POST",headers:H(),body:JSON.stringify(b)}).then(r=>r.json()),
+  deleteDoc:(id)=>fetch(`${API_URL}/api/docs/${id}`,{method:"DELETE",headers:H()}).then(r=>r.json()),
+  getHistory:()=>fetch(`${API_URL}/api/history`).then(r=>r.json()),
+  clearHistory:()=>fetch(`${API_URL}/api/history`,{method:"DELETE",headers:H()}).then(r=>r.json()),
+};
+
+const DEFAULT_SITE={settings:{brandName:"--force ./buildyou",tagline:"rm -rf doubt",primaryColor:"#3DFF73",accentColor:"#b5ff4d",email:"forcebuildyou@gmail.com",phone:"",address:""},hero:{heading:"Terminal Forest Websites",subheading:"AI-managed sites. Chat to update. Live in seconds.",ctaText:"Get Started",ctaSecondary:"See How"},about:{heading:"About",body:"NOVA is an AI website admin. Talk to it, and your site updates in real time.",highlight:"Local-first · Private · Streaming"},services:[{icon:"❯",title:"Chat Updates",description:"Tell NOVA what to change. It updates your site live."},{icon:"◈",title:"RAG Knowledge",description:"Feed it docs. It retrieves context automatically."},{icon:"◆",title:"Streaming",description:"Replies stream word-by-word over WebSocket."}],contact:{heading:"Let's Build",subtext:"Ready? Talk to NOVA.",buttonText:"Start Chatting"}};
+
+function useNOVASocket({onMessage}){
+  const wsRef=useRef(null),retryRef=useRef(null),retryCount=useRef(0),maxRetries=12;
+  const [status,setStatus]=useState("connecting");
+  const connect=useCallback(()=>{
+    if(wsRef.current?.readyState===WebSocket.OPEN)return;
+    setStatus("connecting");
+    const ws=new WebSocket(WS_URL);wsRef.current=ws;
+    ws.onopen=()=>{retryCount.current=0;setStatus("open")};
+    ws.onmessage=(ev)=>{try{onMessage(JSON.parse(ev.data))}catch{}};
+    ws.onerror=()=>setStatus("error");
+    ws.onclose=()=>{
+      setStatus("closed");wsRef.current=null;
+      if(retryCount.current>=maxRetries){setStatus("error");return}
+      const delay=Math.min(1000*2**retryCount.current,30000);retryCount.current++;
+      retryRef.current=setTimeout(connect,delay);
+    };
+  },[onMessage]);
+  useEffect(()=>{
+    connect();
+    const ping=setInterval(()=>{if(wsRef.current?.readyState===WebSocket.OPEN)wsRef.current.send(JSON.stringify({type:"ping"}))},25000);
+    return()=>{clearInterval(ping);clearTimeout(retryRef.current);wsRef.current?.close()};
+  },[connect]);
+  const sendMsg=useCallback((msg)=>{if(wsRef.current?.readyState===WebSocket.OPEN){wsRef.current.send(JSON.stringify(msg));return true}return false},[]);
+  const reconnect=useCallback(()=>{retryCount.current=0;clearTimeout(retryRef.current);wsRef.current?.close();connect()},[connect]);
+  return{status,sendMsg,reconnect};
+}
+
+function SitePreview({site}){
+  const pc=site.settings?.primaryColor||"#3DFF73",ac=site.settings?.accentColor||"#b5ff4d",sv=site.services||[];
+  return(<div style={{height:"100%",overflowY:"auto",background:"#fff",fontSize:"14px"}}>
+    <nav style={{background:"#040805",padding:"14px 28px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:10,borderBottom:`2px solid ${pc}`}}>
+      <div style={{color:pc,fontWeight:800,fontSize:"17px",fontFamily:"var(--mono)"}}>{site.settings?.brandName}</div>
+      <div style={{display:"flex",gap:"20px"}}>{["About","Services","Contact"].map(n=><span key={n} style={{color:"rgba(255,255,255,0.7)",fontSize:"13px",cursor:"pointer"}}>{n}</span>)}</div>
+    </nav>
+    <div style={{padding:"72px 32px 64px",textAlign:"center",background:`linear-gradient(160deg,${pc}14 0%,${ac}08 100%)`}}>
+      <div style={{display:"inline-block",background:`${ac}20`,color:"#1a3a1a",borderRadius:"100px",padding:"4px 14px",fontSize:"11px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"20px"}}>{site.settings?.tagline}</div>
+      <h1 style={{fontSize:"38px",fontWeight:900,color:"#0f0f1a",maxWidth:"600px",margin:"0 auto 16px",lineHeight:1.15,fontFamily:"var(--mono)"}}>{site.hero?.heading}</h1>
+      <p style={{fontSize:"16px",color:"#666",maxWidth:"520px",margin:"0 auto 32px",lineHeight:1.7}}>{site.hero?.subheading}</p>
+      <div style={{display:"flex",gap:"12px",justifyContent:"center"}}><button style={{background:"#040805",color:pc,border:`2px solid ${pc}`,padding:"13px 28px",borderRadius:"8px",fontSize:"14px",fontWeight:700,cursor:"pointer"}}>{site.hero?.ctaText}</button><button style={{background:"transparent",color:"#040805",border:"2px solid #040805",padding:"11px 26px",borderRadius:"8px",fontSize:"14px",fontWeight:600,cursor:"pointer"}}>{site.hero?.ctaSecondary}</button></div>
+    </div>
+    <div style={{padding:"56px 40px",maxWidth:"780px",margin:"0 auto"}}>
+      <div style={{width:"36px",height:"3px",background:ac,borderRadius:"2px",marginBottom:"20px"}}/>
+      <h2 style={{fontSize:"26px",fontWeight:800,color:"#0f0f1a",marginBottom:"14px",fontFamily:"var(--mono)"}}>{site.about?.heading}</h2>
+      <p style={{fontSize:"15px",color:"#555",lineHeight:1.75,marginBottom:"22px"}}>{site.about?.body}</p>
+      <div style={{display:"inline-block",background:"#040805",color:pc,padding:"7px 18px",borderRadius:"100px",fontSize:"12px",fontWeight:700}}>{site.about?.highlight}</div>
+    </div>
+    <div style={{padding:"56px 32px",background:"#f4f8f4"}}><div style={{maxWidth:"860px",margin:"0 auto"}}>
+      <h2 style={{fontSize:"26px",fontWeight:800,color:"#0f0f1a",marginBottom:"36px",textAlign:"center",fontFamily:"var(--mono)"}}>Services</h2>
+      <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(sv.length,3)},1fr)`,gap:"20px"}}>
+        {sv.map((s,i)=>(<div key={i} style={{background:"#fff",borderRadius:"14px",padding:"26px",boxShadow:"0 2px 16px rgba(0,0,0,0.06)",borderTop:`3px solid ${i%2===0?pc:ac}`}}><div style={{fontSize:"24px",marginBottom:"10px",color:pc}}>{s.icon||"◆"}</div><h3 style={{fontSize:"16px",fontWeight:800,color:"#0f0f1a",marginBottom:"8px",fontFamily:"var(--mono)"}}>{s.title}</h3><p style={{fontSize:"13px",color:"#777",lineHeight:1.65}}>{s.description}</p></div>))}
+      </div></div></div>
+    <div style={{padding:"72px 32px",textAlign:"center",background:"#040805",color:"#fff",borderTop:`3px solid ${pc}`}}>
+      <h2 style={{fontSize:"30px",fontWeight:800,marginBottom:"12px",color:pc,fontFamily:"var(--mono)"}}>{site.contact?.heading}</h2>
+      <p style={{fontSize:"15px",opacity:0.7,marginBottom:"28px"}}>{site.contact?.subtext}</p>
+      <button style={{background:pc,color:"#040805",border:"none",padding:"13px 34px",borderRadius:"8px",fontSize:"14px",fontWeight:800,cursor:"pointer",fontFamily:"var(--mono)"}}>{site.contact?.buttonText}</button>
+    </div>
+  </div>);
+}
+
+function WSStatusPill({status,onReconnect}){
+  const cfg={open:{dot:"#3DFF73",text:"#3DFF73",label:"LIVE · WS"},connecting:{dot:"#ffaa00",text:"#ffaa00",label:"CONNECTING"},closed:{dot:"#ff4f4f",text:"#ff4f4f",label:"RECONNECTING"},error:{dot:"#ff4f4f",text:"#ff4f4f",label:"OFFLINE"}}[status]||{};
+  return(<div style={{display:"flex",alignItems:"center",gap:"6px",background:`${cfg.dot}14`,border:`1px solid ${cfg.dot}44`,borderRadius:"100px",padding:"3px 10px",cursor:status==="error"?"pointer":"default"}} onClick={status==="error"?onReconnect:undefined}><div style={{width:"6px",height:"6px",borderRadius:"50%",background:cfg.dot,animation:status==="open"?"pulse 2s infinite":"none"}}/><span style={{fontSize:"9px",color:cfg.text,fontWeight:700,letterSpacing:"0.06em"}}>{cfg.label}</span></div>);
+}
+
+function StreamBubble({text,streaming}){
+  const fmt=t=>t.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/`(.*?)`/g,`<code style="background:#3DFF7322;color:#3DFF73;padding:1px 6px;border-radius:4px;font-size:12px">$1</code>`).replace(/\n/g,"<br/>");
+  return(<div style={{display:"flex",gap:"9px",alignItems:"flex-start"}}>
+    <div style={{width:"26px",height:"26px",borderRadius:"7px",background:"linear-gradient(135deg,#3DFF73,#2EA05C)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",flexShrink:0,marginTop:"1px",color:"#040805",fontWeight:800}}>❯</div>
+    <div style={{maxWidth:"82%",padding:"10px 14px",borderRadius:"3px 14px 14px 14px",background:"#3DFF7310",border:"1px solid #3DFF7330",color:"#e0e0f0",fontSize:"13px",lineHeight:1.75}}><span dangerouslySetInnerHTML={{__html:fmt(text)}}/>{streaming&&<span style={{display:"inline-block",width:"2px",height:"14px",background:"#3DFF73",marginLeft:"3px",verticalAlign:"middle",animation:"blink 0.9s step-end infinite"}}/>}</div>
+  </div>);
+}
+
+function NovaV2(){
+  const [site,setSite]=useState(DEFAULT_SITE);
+  const [messages,setMessages]=useState([]);
+  const [streamingMsg,setStreamingMsg]=useState(null);
+  const [input,setInput]=useState("");
+  const [isStreaming,setIsStreaming]=useState(false);
+  const [tab,setTab]=useState("preview");
+  const [docs,setDocs]=useState([]);
+  const [docForm,setDocForm]=useState({title:"",content:""});
+  const [showDocForm,setShowDocForm]=useState(false);
+  const [notif,setNotif]=useState(null);
+  const [settings,setSettings]=useState({...DEFAULT_SITE.settings});
+  const [siteVersion,setSiteVersion]=useState(null);
+  const bottomRef=useRef(null);
+
+  const toast=useCallback((msg,type="success")=>{setNotif({msg,type});setTimeout(()=>setNotif(null),3500)},[]);
+
+  const handleWSMessage=useCallback((msg)=>{
+    switch(msg.type){
+      case "stream_start":setIsStreaming(true);setStreamingMsg("");break;
+      case "stream_delta":setStreamingMsg(p=>(p??"")+msg.payload.text);break;
+      case "stream_end":{
+        const t=msg.payload.fullText;
+        setMessages(p=>[...p,{role:"assistant",content:t}]);
+        setStreamingMsg(null);setIsStreaming(false);
+        if(msg.payload.siteUpdates){const c=Object.keys(msg.payload.siteUpdates).length;toast(`✦ ${c} field${c>1?"s":""} updated live`);setTab("preview")}
+        break}
+      case "site_updated":
+        if(msg.payload.site){setSite(msg.payload.site);setSettings(msg.payload.site.settings);setSiteVersion(msg.payload.site._meta?.version)}
+        break;
+      case "error":
+        setIsStreaming(false);setStreamingMsg(null);
+        setMessages(p=>[...p,{role:"assistant",content:`⚠ ${msg.payload.message}`}]);
+        break;
+      default:break;
+    }
+  },[toast]);
+
+  const {status,sendMsg,reconnect}=useNOVASocket({onMessage:handleWSMessage});
+
+  useEffect(()=>{(async()=>{try{
+    const [s,d,h]=await Promise.all([api.getSite(),api.getDocs(),api.getHistory()]);
+    if(s.success){setSite(s.data);setSettings(s.data.settings);setSiteVersion(s.data._meta?.version)}
+    if(d.success)setDocs(d.data);
+    if(h.success&&h.data.length)setMessages(h.data.map(m=>({role:m.role,content:m.content})));
+  }catch(e){console.warn("REST load failed:",e.message)}})()},[]);
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"})},[messages,streamingMsg]);
+
+  const send=useCallback((text)=>{
+    const m=(text||input).trim();
+    if(!m||isStreaming)return;
+    setInput("");setMessages(p=>[...p,{role:"user",content:m}]);
+    if(!sendMsg({type:"chat",payload:{message:m,history:messages.slice(-20)}}))toast("WebSocket not connected","error");
+  },[input,isStreaming,messages,sendMsg,toast]);
+
+  const bg="#040805",surface="#0a0f0a",border="#1c2b1c",text="#e0e0f0",dim="#5a7a5a",ic="#3DFF73";
+  const STARTERS=["Change my hero heading to something powerful","Switch to a deep forest and acid colour scheme","Rewrite my about section — make it more confident","What does my site currently say?","Update my contact section to feel more urgent"];
+  const fmtMsg=t=>t.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/`(.*?)`/g,`<code style="background:#3DFF7322;color:#3DFF73;padding:1px 6px;border-radius:4px;font-size:12px">$1</code>`).replace(/\n/g,"<br/>");
+
+  return(<div style={{height:"100vh",display:"flex",flexDirection:"column",background:bg,color:text,overflow:"hidden"}}>
+    <div style={{display:"flex",alignItems:"center",padding:"0 18px",height:"50px",borderBottom:`1px solid ${border}`,background:surface,flexShrink:0,gap:"10px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+        <div style={{width:"28px",height:"28px",borderRadius:"7px",background:"linear-gradient(135deg,#3DFF73,#2EA05C)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",color:"#040805",fontWeight:800}}>❯</div>
+        <div><div style={{fontSize:"13px",fontWeight:800,letterSpacing:"0.08em"}}>nova <span style={{fontWeight:400,color:dim,fontSize:"11px"}}>v2</span></div><div style={{fontSize:"9px",color:dim,letterSpacing:"0.1em"}}>website admin ai · streaming</div></div>
+      </div>
+      <div style={{width:"1px",height:"22px",background:border}}/>
+      <WSStatusPill status={status} onReconnect={reconnect}/>
+      {siteVersion&&<span style={{fontSize:"10px",color:dim}}>v{siteVersion}</span>}
+      <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"8px"}}>
+        {docs.length>0&&<span style={{fontSize:"10px",background:"#3DFF7318",border:`1px solid ${ic}44`,borderRadius:"100px",padding:"2px 9px",color:ic}}>{docs.length} docs</span>}
+        <span style={{fontSize:"11px",color:dim}}>❯ {site.settings?.brandName||"…"}</span>
+      </div>
+    </div>
+    {(status==="error"||status==="closed")&&(<div style={{background:"#ff4f4f14",borderBottom:"1px solid #ff4f4f33",padding:"7px 18px",fontSize:"12px",color:"#fca5a5",display:"flex",alignItems:"center",gap:"8px",flexShrink:0}}><span>⚠</span><span>{status==="error"?"Backend unreachable — is server.js running?":"Reconnecting…"}</span>{status==="error"&&<button onClick={reconnect} style={{marginLeft:"auto",background:"#ff4f4f22",border:"1px solid #ff4f4f44",borderRadius:"6px",padding:"3px 10px",color:"#fca5a5",fontSize:"11px",cursor:"pointer",fontFamily:"inherit"}}>Retry</button>}</div>)}
+
+    <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+      <div style={{width:"420px",minWidth:"360px",display:"flex",flexDirection:"column",borderRight:`1px solid ${border}`,background:surface}}>
+        <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:"12px"}}>
+          {messages.length===0&&streamingMsg===null&&(<div style={{padding:"6px 0"}}>
+            <div style={{marginBottom:"18px"}}><div style={{fontSize:"17px",fontWeight:800,marginBottom:"5px"}}>❯ hello</div><div style={{fontSize:"13px",color:dim,lineHeight:1.6}}>i'm nova — your ai website admin. replies stream live. every change saves instantly.</div></div>
+            <div style={{fontSize:"10px",color:dim,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:"8px",fontWeight:700}}>try saying…</div>
+            <div style={{display:"flex",flexDirection:"column",gap:"5px"}}>{STARTERS.map(s=>(<button key={s} className="starter" onClick={()=>send(s)} style={{background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"7px",padding:"8px 11px",cursor:"pointer",textAlign:"left",color:text,fontSize:"12px",fontFamily:"inherit",transition:"all 0.15s"}}>{s}</button>))}</div>
+          </div>)}
+          {messages.map((m,i)=>(<div key={i} style={{display:"flex",gap:"8px",justifyContent:m.role==="user"?"flex-end":"flex-start",alignItems:"flex-start"}}>
+            {m.role==="assistant"&&<div style={{width:"26px",height:"26px",borderRadius:"7px",background:"linear-gradient(135deg,#3DFF73,#2EA05C)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",flexShrink:0,marginTop:"1px",color:"#040805",fontWeight:800}}>❯</div>}
+            <div style={{maxWidth:"82%",padding:"10px 14px",borderRadius:m.role==="user"?"13px 13px 3px 13px":"3px 13px 13px 13px",background:m.role==="user"?"linear-gradient(135deg,#3DFF73,#2EA05C)":"#3DFF7310",border:m.role==="user"?"none":`1px solid ${border}`,color:m.role==="user"?"#040805":text,fontSize:"13px",lineHeight:1.7,fontWeight:m.role==="user"?600:400}} dangerouslySetInnerHTML={{__html:fmtMsg(m.content)}}/>
+          </div>))}
+          {streamingMsg!==null&&<StreamBubble text={streamingMsg} streaming={isStreaming}/>}
+          <div ref={bottomRef}/>
+        </div>
+        <div style={{padding:"10px 13px 13px",borderTop:`1px solid ${border}`}}>
+          <div style={{display:"flex",gap:"7px",alignItems:"flex-end"}}>
+            <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} rows={2} disabled={isStreaming} placeholder={isStreaming?"nova is responding…":"update content, ask questions…"} style={{flex:1,background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"9px",padding:"9px 12px",color:text,fontSize:"13px",resize:"none",lineHeight:1.5,fontFamily:"inherit",opacity:isStreaming?0.5:1}}/>
+            <button onClick={()=>send()} disabled={isStreaming||!input.trim()||status!=="open"} className="nb" style={{width:"38px",height:"38px",borderRadius:"9px",flexShrink:0,background:isStreaming||!input.trim()||status!=="open"?"#3DFF7318":"linear-gradient(135deg,#3DFF73,#2EA05C)",border:"none",cursor:"pointer",fontSize:"14px",color:"#040805",fontWeight:800,transition:"all 0.15s"}}>{isStreaming?"…":"▶"}</button>
+          </div>
+          <div style={{marginTop:"6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:"10px",color:dim}}>ws streaming · {docs.length} docs · enter to send</span>{messages.length>0&&<button onClick={async()=>{await api.clearHistory();setMessages([]);toast("History cleared")}} style={{fontSize:"10px",color:dim,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit"}}>clear</button>}</div>
+        </div>
+      </div>
+
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",padding:"0 14px",height:"42px",borderBottom:`1px solid ${border}`,gap:"3px",flexShrink:0}}>
+          {[{id:"preview",icon:"◉",label:"Preview"},{id:"knowledge",icon:"◈",label:"Knowledge"},{id:"settings",icon:"◆",label:"Settings"}].map(t=>(<button key={t.id} className="tabbtn" onClick={()=>setTab(t.id)} style={{background:tab===t.id?"#3DFF7322":"transparent",border:tab===t.id?`1px solid #3DFF7355`:"1px solid transparent",borderRadius:"7px",padding:"4px 13px",cursor:"pointer",color:tab===t.id?ic:dim,fontSize:"12px",fontWeight:tab===t.id?700:500,display:"flex",alignItems:"center",gap:"5px",fontFamily:"inherit",transition:"all 0.15s"}}><span>{t.icon}</span>{t.label}</button>))}
+          {notif&&<div style={{marginLeft:"auto",background:notif.type==="success"?"#3DFF7318":"#ff4f4f18",border:`1px solid ${notif.type==="success"?"#3DFF7344":"#ff4f4f44"}`,borderRadius:"100px",padding:"3px 11px",fontSize:"11px",color:notif.type==="success"?"#3DFF73":"#fca5a5",animation:"slideIn 0.2s ease"}}>{notif.msg}</div>}
+        </div>
+        {tab==="preview"&&<div style={{flex:1,overflow:"hidden"}}><SitePreview site={site}/></div>}
+        {tab==="knowledge"&&(<div style={{flex:1,overflowY:"auto",padding:"20px"}}><div style={{maxWidth:"680px"}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:"18px"}}>
+            <div><div style={{fontSize:"15px",fontWeight:800,marginBottom:"4px"}}>knowledge base (rag)</div><div style={{fontSize:"12px",color:dim}}>docs stored on backend, retrieved when you chat.</div></div>
+            <button onClick={()=>setShowDocForm(v=>!v)} className="nb" style={{background:"linear-gradient(135deg,#3DFF73,#2EA05C)",border:"none",borderRadius:"7px",padding:"7px 13px",color:"#040805",fontSize:"12px",fontWeight:700,cursor:"pointer",flexShrink:0,marginLeft:"12px",transition:"all 0.15s"}}>+ add doc</button>
+          </div>
+          {showDocForm&&(<div style={{background:"#3DFF7308",border:"1px solid #3DFF7330",borderRadius:"11px",padding:"16px",marginBottom:"16px",animation:"slideIn 0.2s ease"}}>
+            <div style={{fontSize:"12px",fontWeight:700,marginBottom:"10px"}}>new document</div>
+            <input value={docForm.title} onChange={e=>setDocForm(p=>({...p,title:e.target.value}))} placeholder="Title" style={{width:"100%",background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"7px",padding:"8px 12px",color:text,fontSize:"13px",fontFamily:"inherit",marginBottom:"9px"}}/>
+            <textarea value={docForm.content} onChange={e=>setDocForm(p=>({...p,content:e.target.value}))} placeholder="Paste content…" rows={5} style={{width:"100%",background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"7px",padding:"8px 12px",color:text,fontSize:"13px",fontFamily:"inherit",resize:"vertical",lineHeight:1.6}}/>
+            <div style={{display:"flex",gap:"7px",marginTop:"9px"}}>
+              <button onClick={async()=>{if(!docForm.title.trim()||!docForm.content.trim())return;try{const r=await api.addDoc(docForm);if(r.success){const d=await api.getDocs();if(d.success)setDocs(d.data);setDocForm({title:"",content:""});setShowDocForm(false);toast("Document added")}}catch{toast("Failed","error")}}} className="nb" style={{background:"linear-gradient(135deg,#3DFF73,#2EA05C)",border:"none",borderRadius:"7px",padding:"7px 16px",color:"#040805",fontSize:"12px",fontWeight:700,cursor:"pointer",transition:"all 0.15s"}}>save</button>
+              <button onClick={()=>setShowDocForm(false)} style={{background:"transparent",border:`1px solid ${border}`,borderRadius:"7px",padding:"7px 13px",color:dim,fontSize:"12px",cursor:"pointer",fontFamily:"inherit"}}>cancel</button>
+            </div>
+          </div>)}
+          {docs.length===0?(<div style={{textAlign:"center",padding:"42px 20px",border:"1px dashed #3DFF7330",borderRadius:"11px"}}><div style={{fontSize:"24px",marginBottom:"10px"}}>◈</div><div style={{fontSize:"14px",fontWeight:700,marginBottom:"5px"}}>no documents yet</div><div style={{fontSize:"12px",color:dim}}>add brand guidelines, product info, faqs.</div></div>):(
+            <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>{docs.map(d=>(<div key={d.id} className="dcard" style={{background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"9px",padding:"13px 15px",display:"flex",gap:"11px",transition:"border-color 0.15s"}}>
+              <div style={{width:"30px",height:"30px",borderRadius:"7px",background:"#3DFF7322",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",flexShrink:0,color:ic}}>◈</div>
+              <div style={{flex:1,minWidth:0}}><div style={{fontSize:"13px",fontWeight:700,marginBottom:"3px"}}>{d.title}</div><div style={{fontSize:"11px",color:dim,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{d.content?.slice(0,100)}…</div><div style={{fontSize:"10px",color:dim,marginTop:"5px"}}>{d.chars?.toLocaleString()||"?"} chars</div></div>
+              <button onClick={async()=>{try{await api.deleteDoc(d.id);setDocs(dd=>dd.filter(x=>x.id!==d.id));toast("Removed","info")}catch{toast("Failed","error")}}} style={{background:"transparent",border:"none",color:"#ff4f4f88",cursor:"pointer",fontSize:"13px",flexShrink:0,padding:"0 3px"}}>✕</button>
+            </div>))}</div>)}
+        </div></div>)}
+        {tab==="settings"&&(<div style={{flex:1,overflowY:"auto",padding:"20px"}}><div style={{maxWidth:"520px"}}>
+          <div style={{fontSize:"15px",fontWeight:800,marginBottom:"3px"}}>site settings</div>
+          <div style={{fontSize:"12px",color:dim,marginBottom:"20px"}}>saved to backend. or just tell nova in chat.</div>
+          {[{key:"brandName",label:"brand name"},{key:"tagline",label:"tagline"},{key:"email",label:"email"},{key:"phone",label:"phone"},{key:"address",label:"address"}].map(f=>(<div key={f.key} style={{marginBottom:"12px"}}><label style={{display:"block",fontSize:"10px",fontWeight:700,color:dim,letterSpacing:"0.09em",textTransform:"uppercase",marginBottom:"5px"}}>{f.label}</label><input value={settings[f.key]||""} onChange={e=>setSettings(p=>({...p,[f.key]:e.target.value}))} style={{width:"100%",background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"7px",padding:"8px 12px",color:text,fontSize:"13px",fontFamily:"inherit"}}/></div>))}
+          <div style={{display:"flex",gap:"14px",marginBottom:"12px"}}>{[{key:"primaryColor",label:"primary"},{key:"accentColor",label:"accent"}].map(f=>(<div key={f.key} style={{flex:1}}><label style={{display:"block",fontSize:"10px",fontWeight:700,color:dim,letterSpacing:"0.09em",textTransform:"uppercase",marginBottom:"5px"}}>{f.label}</label><div style={{display:"flex",gap:"7px",alignItems:"center"}}><input type="color" value={settings[f.key]||"#3DFF73"} onChange={e=>setSettings(p=>({...p,[f.key]:e.target.value}))} style={{width:"36px",height:"34px",borderRadius:"7px",border:`1px solid ${border}`,cursor:"pointer",padding:"2px",background:"transparent"}}/><input value={settings[f.key]||""} onChange={e=>setSettings(p=>({...p,[f.key]:e.target.value}))} style={{flex:1,background:"#3DFF7308",border:`1px solid ${border}`,borderRadius:"7px",padding:"8px 10px",color:text,fontSize:"12px"}}/></div></div>))}</div>
+          <div style={{display:"flex",gap:"8px",marginTop:"16px"}}>
+            <button onClick={async()=>{try{const updates=Object.fromEntries(Object.entries(settings).map(([k,v])=>[`settings.${k}`,v]));const r=await api.patchSite(updates);if(r.success){setSite(r.data);setSiteVersion(r.data._meta?.version);toast("Settings saved")}}catch{toast("Save failed","error")}}} className="nb" style={{background:"linear-gradient(135deg,#3DFF73,#2EA05C)",border:"none",borderRadius:"8px",padding:"10px 22px",color:"#040805",fontSize:"13px",fontWeight:700,cursor:"pointer",transition:"all 0.15s"}}>save</button>
+            <button onClick={async()=>{if(!confirm("Reset all content?"))return;const r=await api.resetSite();if(r.success){setSite(r.data);setSettings(r.data.settings);toast("Site reset")}}} style={{background:"#ff4f4f14",border:"1px solid #ff4f4f33",borderRadius:"8px",padding:"10px 16px",color:"#fca5a5",fontSize:"13px",cursor:"pointer",fontFamily:"inherit"}}>reset</button>
+          </div>
+          <div style={{marginTop:"24px",padding:"14px",background:"#3DFF7308",border:"1px solid #3DFF7322",borderRadius:"9px"}}>
+            <div style={{fontSize:"11px",fontWeight:700,color:ic,marginBottom:"6px",letterSpacing:"0.06em"}}>CONNECTION</div>
+            <div style={{fontSize:"11px",color:dim,lineHeight:1.8}}><div>ws: {WS_URL}</div><div>api: {API_URL}</div><div>status: {status}</div></div>
+          </div>
+        </div></div>)}
+      </div>
+    </div>
+    <div style={{position:"fixed",bottom:0,left:0,right:0,background:surface,borderTop:`1px solid ${border}`,padding:"6px 16px",display:"flex",justifyContent:"space-between",fontSize:"10px",color:dim,zIndex:100}}><span>❯ y_ · --force ./buildyou</span><span>nova v2 · {status}</span></div>
+  </div>);
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<NovaV2/>);
+</script>
+</body>
+</html>
